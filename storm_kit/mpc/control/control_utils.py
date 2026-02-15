@@ -25,7 +25,6 @@ import math
 import numpy as np
 import torch
 from torch.distributions.multivariate_normal import MultivariateNormal
-import ghalton
 
 
 def scale_ctrl(ctrl, action_lows, action_highs, squash_fn='clamp'):
@@ -237,13 +236,24 @@ def generate_halton_samples(num_samples, ndims, bases=None, use_ghalton=True, se
         for dim in range(ndims):
             samples[:, dim] = generate_van_der_corput_samples_batch(idx_batch, bases[dim])
     else:
-        
-        if ndims <= 100:
-            perms = ghalton.EA_PERMS[:ndims]
-            sequencer = ghalton.GeneralizedHalton(perms)
-        else:
-            sequencer = ghalton.GeneralizedHalton(ndims, seed_val)
-        samples = torch.tensor(sequencer.get(num_samples), device=device, dtype=float_dtype)
+        # Prefer `ghalton` if available, otherwise fall back to SciPy's QMC implementation.
+        # This keeps STORM runnable in environments where installing `ghalton` is not possible.
+        try:
+            import ghalton  # type: ignore
+
+            if ndims <= 100:
+                perms = ghalton.EA_PERMS[:ndims]
+                sequencer = ghalton.GeneralizedHalton(perms)
+            else:
+                sequencer = ghalton.GeneralizedHalton(ndims, seed_val)
+            samples = torch.tensor(sequencer.get(num_samples), device=device, dtype=float_dtype)
+        except ModuleNotFoundError:
+            from scipy.stats import qmc
+
+            # SciPy returns samples in [0, 1).
+            sampler = qmc.Halton(d=ndims, scramble=True, seed=seed_val)
+            samples_np = sampler.random(n=num_samples)
+            samples = torch.as_tensor(samples_np, device=device, dtype=float_dtype)
     return samples
 
 

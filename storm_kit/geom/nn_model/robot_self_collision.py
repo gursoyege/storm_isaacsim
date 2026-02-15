@@ -56,15 +56,30 @@ class RobotSelfCollisionNet():
             f_name (str): file name, this is relative to weights folder in this repo.
             tensor_args (Dict): device and dtype for pytorch tensors
         """        
+        weights_path = join_path(get_weights_path(), f_name)
+        self.weights_path = weights_path
+        self.weights_loaded = False
+        self.norm_dict = None
         try:
-            chk = torch.load(join_path(get_weights_path(), f_name))
+            chk = torch.load(weights_path, map_location="cpu")
             self.model.load_state_dict(chk["model_state_dict"])
             self.norm_dict = chk["norm"]
             for k in self.norm_dict.keys():
                 self.norm_dict[k]['mean'] = self.norm_dict[k]['mean'].to(**tensor_args)
                 self.norm_dict[k]['std'] = self.norm_dict[k]['std'].to(**tensor_args)
-        except Exception:
-            print('WARNING: Weights not loaded')
+            self.weights_loaded = True
+        except FileNotFoundError:
+            print(
+                f"[WARN] Robot self-collision weights not found: {weights_path}. "
+                "Falling back to analytic self-collision (slower).",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[WARN] Failed to load robot self-collision weights: {weights_path} "
+                f"({type(exc).__name__}: {exc}). Falling back to analytic self-collision (slower).",
+                flush=True,
+            )
         self.model = self.model.to(**tensor_args)
         self.tensor_args = tensor_args
         self.model.eval()
@@ -79,6 +94,12 @@ class RobotSelfCollisionNet():
         Returns:
             [tensor]: largest signed distance between any two non-consecutive links of the robot.
         """        
+        if not getattr(self, "weights_loaded", False) or self.norm_dict is None:
+            raise RuntimeError(
+                "RobotSelfCollisionNet weights are not loaded. "
+                f"Expected weights file at: {getattr(self, 'weights_path', '<unknown>')}. "
+                "Generate weights with: `python scripts/train_self_collision.py`."
+            )
         with torch.no_grad():
             q_scale = scale_to_net(q, self.norm_dict,'x')
             dist = self.model.forward(q_scale)
@@ -94,6 +115,12 @@ class RobotSelfCollisionNet():
         Returns:
             [tensor]: probability of collision of links, from sigmoid value.
         """        
+        if not getattr(self, "weights_loaded", False) or self.norm_dict is None:
+            raise RuntimeError(
+                "RobotSelfCollisionNet weights are not loaded. "
+                f"Expected weights file at: {getattr(self, 'weights_path', '<unknown>')}. "
+                "Generate weights with: `python scripts/train_self_collision.py`."
+            )
         with torch.no_grad():
             q_scale = scale_to_net(q, self.norm_dict,'x')
             dist = torch.sigmoid(self.model.forward(q_scale))

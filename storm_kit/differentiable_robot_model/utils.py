@@ -65,7 +65,6 @@ from functools import reduce
 
 
 prod = lambda l: reduce(operator.mul, l, 1)
-torch.set_default_tensor_type(torch.DoubleTensor)
 
 def cross_product(vec3a, vec3b):
     vec3a = convert_into_at_least_2d_pytorch_tensor(vec3a)
@@ -131,4 +130,3 @@ def convert_into_at_least_2d_pytorch_tensor(variable):
         return tensor_var.unsqueeze(0)
     else:
         return tensor_var
-

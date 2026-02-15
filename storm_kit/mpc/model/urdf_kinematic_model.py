@@ -25,7 +25,6 @@ import torch
 import torch.autograd.profiler as profiler
 
 from ...differentiable_robot_model.differentiable_robot_model import DifferentiableRobotModel
-from urdfpy import URDF
 from .model_base import DynamicsModelBase
 from .integration_utils import build_int_matrix, build_fd_matrix, tensor_step_acc, tensor_step_vel, tensor_step_pos, tensor_step_jerk
 
@@ -48,13 +47,14 @@ class URDFKinematicModel(DynamicsModelBase):
 
         #self.robot_model.half()
         self.n_dofs = self.robot_model._n_dofs
-        self.urdfpy_robot = URDF.load(urdf_path) #only for visualization
+        self._urdfpy_robot = None  # lazy-loaded only for optional visualization
         
         self.d_state = 3 * self.n_dofs + 1
         self.d_action = self.n_dofs
 
         #Variables for enforcing joint limits
-        self.joint_names = self.urdfpy_robot.actuated_joint_names
+        # Use the already-parsed URDF (urdf_parser_py) from DifferentiableRobotModel to avoid a hard dependency on `urdfpy`.
+        self.joint_names = [j.name for j in self.robot_model._urdf_model.robot.joints if j.type != "fixed"][: self.n_dofs]
         self.joint_lim_dicts = self.robot_model.get_joint_limits()
         self.state_upper_bounds = torch.zeros(self.d_state, device=self.device, dtype=self.float_dtype)
         self.state_lower_bounds = torch.zeros(self.d_state, device=self.device, dtype=self.float_dtype)
@@ -279,22 +279,36 @@ class URDFKinematicModel(DynamicsModelBase):
         return act
 
     #Rendering
+    def _get_urdfpy_robot(self):
+        if self._urdfpy_robot is not None:
+            return self._urdfpy_robot
+        try:
+            from urdfpy import URDF
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "Optional dependency `urdfpy` is required for URDFKinematicModel.render()/render_trajectory(). "
+                "Install it with: `python -m pip install urdfpy`"
+            ) from exc
+        self._urdfpy_robot = URDF.load(self.urdf_path)
+        return self._urdfpy_robot
+
     def render(self, state):
+        urdfpy_robot = self._get_urdfpy_robot()
         q = state[:, 0:self.n_dofs]
         state_dict = {}
-        for (i,joint) in enumerate(self.urdfpy_robot.actuated_joints):
+        for (i,joint) in enumerate(urdfpy_robot.actuated_joints):
             state_dict[joint.name] = q[:,i].item()
-        self.urdfpy_robot.show(cfg=state_dict,use_collision=True) 
+        urdfpy_robot.show(cfg=state_dict,use_collision=True) 
 
 
     def render_trajectory(self, state_list):
+        urdfpy_robot = self._get_urdfpy_robot()
         state_dict = {}
         q = state_list[0][:, 0:self.n_dofs]
-        for (i,joint) in enumerate(self.urdfpy_robot.actuated_joints):
+        for (i,joint) in enumerate(urdfpy_robot.actuated_joints):
             state_dict[joint.name] = [q[:,i].item()]
         for state in state_list[1:]:
             q = state[:, 0:self.n_dofs]
-            for (i,joint) in enumerate(self.urdfpy_robot.actuated_joints):
+            for (i,joint) in enumerate(urdfpy_robot.actuated_joints):
                 state_dict[joint.name].append(q[:,i].item())
-        self.urdfpy_robot.animate(cfg_trajectory=state_dict,use_collision=True) 
-
+        urdfpy_robot.animate(cfg_trajectory=state_dict,use_collision=True) 

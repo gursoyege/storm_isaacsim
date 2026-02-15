@@ -62,7 +62,7 @@ class RobotSelfCollisionCost(nn.Module):
 
 
         self.coll.build_batch_features(batch_size=self.batch_size, clone_pose=True, clone_objs=True)
-        
+
         self.res = None
         self.t_mat = None
 
@@ -84,14 +84,25 @@ class RobotSelfCollisionCost(nn.Module):
         res = torch.max(res, dim=-1)[0]
         return res
 
-    def forward(self, q):
+    def forward(self, q, link_pos_seq=None, link_rot_seq=None):
         batch_size = q.shape[0]
         horizon = q.shape[1]
-        q = q.view(batch_size * horizon, q.shape[2])
-        
-        res = self.coll.check_self_collisions_nn(q)
-        
-        res = res.view(batch_size, horizon)
+        q_flat = q.view(batch_size * horizon, q.shape[2])
+
+        use_nn = bool(getattr(self.coll.robot_nn, "weights_loaded", False)) and (
+            getattr(self.coll.robot_nn, "norm_dict", None) is not None
+        )
+        if use_nn:
+            res = self.coll.check_self_collisions_nn(q_flat)
+            res = res.view(batch_size, horizon)
+        else:
+            if link_pos_seq is None or link_rot_seq is None:
+                raise RuntimeError(
+                    "Robot self-collision NN weights are not available, and link poses were not provided "
+                    "for analytic self-collision fallback."
+                )
+            res = self.distance(link_pos_seq, link_rot_seq)
+
         res += self.distance_threshold
         res[res <= 0.0] = 0.0
 

@@ -7,6 +7,14 @@
 
 This package contains code for reactive robot motion leveraging parallel compute on the GPU. The implemented control framework leverages MPPI to optimize over sampled actions and their costs. The costs are computed by rolling out the forward model from the current state with the sampled actions. Most files are documented with sphinx. Once you clone this repo, go into docs folder and run `sh generate_docs.sh` to generate documentation.
 
+## Isaac Sim + Isaac Lab
+This workspace ports STORM's simulation backend to Isaac Sim + Isaac Lab (no `isaacgym` runtime dependency).
+
+- Smoketest (headless): `python scripts/isaacsim_smoketest_panda.py --headless`
+- MPPI example (headless): `python examples/franka_reacher.py --headless --steps 200`
+- GUI performance tip: add `--lite` (and consider `--no-cuda` to keep GPU free for rendering).
+- If self-collision weights are missing, STORM falls back to an analytic check (slower). Generate weights with `python scripts/train_self_collision.py`.
+
 **To run on a real Franka Panda, you can use this low-level control wrapper:** [franka_motion_control](https://github.com/mohakbhardwaj/franka_motion_control) from [Mohak Bhardwaj](https://github.com/mohakbhardwaj).
 <p align="center">
   <img width="250" src="docs/images/coll_demo.gif">

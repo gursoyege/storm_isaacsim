@@ -42,7 +42,7 @@ class CircleCollisionCost(nn.Module):
         # BUILD world and robot:
         world_yml = join_path(get_gym_configs_path(), collision_model)
         with open(world_yml) as file:
-            world_params = yaml.safe_load(file, Loader=yaml.FullLoader)
+            world_params = yaml.safe_load(file)
         w_model = world_params['world_model']['coll_objs']
         self.world_spheres = torch.zeros((len(w_model.keys()),3), **tensor_args)
         for i,key in enumerate(w_model.keys()):
@@ -82,6 +82,5 @@ class CircleCollisionCost(nn.Module):
 
 
         return res.to(inp_device)
-
 
 

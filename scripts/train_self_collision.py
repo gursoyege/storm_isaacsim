@@ -51,7 +51,7 @@ def create_dataset(robot_name):
     mpc_yml_file = join_path(get_mpc_configs_path(), task_file)
 
     with open(mpc_yml_file) as file:
-        exp_params = yaml.safe_load(file, Loader=yaml.FullLoader)
+        exp_params = yaml.safe_load(file)
     exp_params['robot_params'] = exp_params['model'] #robot_params
     exp_params['cost']['primitive_collision']['weight'] = 0.0
     exp_params['control_space'] = 'pos'

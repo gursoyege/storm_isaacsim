@@ -27,6 +27,7 @@ import copy
 
 #import numpy as np
 import torch
+import tempfile
 
 
 from ..utils.torch_utils import find_first_idx, find_last_idx
@@ -41,8 +42,14 @@ class ControlProcess(object):
             controller.rollout_fn.dynamics_model.robot_model.delete_lxml_objects()
         except Exception:
             pass
-            
-        torch.save(controller, 'control_instance.p')
+
+        # Persist controller to a temporary file so the optimization process can load it.
+        # Using a temp file avoids relying on the current working directory being writable
+        # (e.g., when running under ROS 2 launch).
+        fd, control_path = tempfile.mkstemp(prefix="storm_control_instance_", suffix=".p")
+        os.close(fd)
+        self._control_cache_path = control_path
+        torch.save(controller, control_path)
         
         try:
             controller.rollout_fn.dynamics_model.robot_model.load_lxml_objects()
@@ -68,7 +75,10 @@ class ControlProcess(object):
         self.opt_queue = Queue(maxsize=1)
 
         
-        self.opt_process = Process(target=optimize_process, args=('control_instance.p', self.opt_queue,self.result_queue))
+        self.opt_process = Process(
+            target=optimize_process,
+            args=(self._control_cache_path, self.opt_queue, self.result_queue),
+        )
         self.opt_process.daemon = True
         self.opt_process.start()
         self.controller = controller
@@ -77,8 +87,14 @@ class ControlProcess(object):
     def predict_next_state(self, t_step, curr_state):
         # predict next state
         # given current t_step, integrate to t_step+mpc_dt
-        t1_idx = find_first_idx(self.command_tstep, t_step) - 1
-        t2_idx = find_first_idx(self.command_tstep, t_step + self.mpc_dt) #- 1
+        t1 = find_first_idx(self.command_tstep, t_step)
+        t2 = find_first_idx(self.command_tstep, t_step + self.mpc_dt)  # - 1
+        if t1 < 0 or t2 < 0:
+            # Requested time is beyond the planned command time-grid (or the grid is empty).
+            # Skip prediction rather than crashing.
+            return curr_state
+        t1_idx = max(0, int(t1) - 1)
+        t2_idx = int(t2)
 
         # integrate from t1->t2
         for i in range(t1_idx, t2_idx):
@@ -195,6 +211,11 @@ class ControlProcess(object):
         opt_data = {'state': None, 'dt':None, 'done':self.done, 'params':None}
         self.opt_queue.put(opt_data)
         self.opt_process.join()
+        try:
+            if getattr(self, "_control_cache_path", None):
+                os.remove(self._control_cache_path)
+        except Exception:
+            pass
 
 def optimize_process(control_string, opt_queue, result_queue):
     """

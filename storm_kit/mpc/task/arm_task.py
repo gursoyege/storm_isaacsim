@@ -34,32 +34,40 @@ from .task_base import BaseTask
 
 
 class ArmTask(BaseTask):
-    def __init__(self, task_file='ur10.yml', robot_file='ur10_reacher.yml', world_file='collision_env.yml', tensor_args={'device':"cpu", 'dtype':torch.float32}):
+    def __init__(
+        self,
+        task_file="ur10.yml",
+        robot_file="ur10_reacher.yml",
+        world_file="collision_env.yml",
+        tensor_args={"device": "cpu", "dtype": torch.float32},
+        world_params=None,
+    ):
 
         super().__init__(tensor_args=tensor_args)
 
 
-        self.controller = self.init_mppi(task_file, robot_file, world_file)
+        self.controller = self.init_mppi(task_file, robot_file, world_file, world_params=world_params)
         self.init_aux()
 
     def get_rollout_fn(self, **kwargs):
         rollout_fn = ArmBase(**kwargs)
         return rollout_fn
 
-    def init_mppi(self, task_file, robot_file, collision_file):
+    def init_mppi(self, task_file, robot_file, collision_file, world_params=None):
         robot_yml = join_path(get_gym_configs_path(), robot_file)
 
         with open(robot_yml) as file:
-            robot_params = yaml.safe_load(file, Loader=yaml.FullLoader)
+            robot_params = yaml.safe_load(file)
 
-        world_yml = join_path(get_gym_configs_path(), collision_file)
-        with open(world_yml) as file:
-            world_params = yaml.safe_load(file, Loader=yaml.FullLoader)
+        if world_params is None:
+            world_yml = join_path(get_gym_configs_path(), collision_file)
+            with open(world_yml) as file:
+                world_params = yaml.safe_load(file)
 
         mpc_yml_file = join_path(mpc_configs_path(), task_file)
 
         with open(mpc_yml_file) as file:
-            exp_params = yaml.safe_load(file, Loader=yaml.FullLoader)
+            exp_params = yaml.safe_load(file)
         exp_params['robot_params'] = exp_params['model'] #robot_params
 
 
@@ -82,4 +90,3 @@ class ArmTask(BaseTask):
         controller = MPPI(**mppi_params)
         self.exp_params = exp_params
         return controller
-

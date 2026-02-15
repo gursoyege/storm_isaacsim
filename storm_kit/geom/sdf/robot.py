@@ -323,7 +323,7 @@ class RobotSphereCollision:
         print(robot_collision_params)
         coll_yml = join_path(get_mpc_configs_path(), robot_collision_params['collision_spheres'])
         with open(coll_yml) as file:
-            coll_params = yaml.safe_load(file, Loader=yaml.FullLoader)
+            coll_params = yaml.safe_load(file)
 
         coll_params = coll_params['collision_spheres']
 
