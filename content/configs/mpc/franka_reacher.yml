@@ -42,8 +42,8 @@ model:
   dt: 0.02
   dt_traj_params:
     base_dt: 0.02
-    base_ratio: 0.5
-    max_dt: 0.2
+    base_ratio: 0.5 # discard
+    max_dt: 0.02
   #control_freq: 10
   #sim_freq: 100
   ee_link_name: "ee_link"
@@ -59,7 +59,7 @@ model:
     link_objs: ['panda_link2', 'panda_link3','panda_link4','panda_link5', 'panda_link6','panda_hand']
     #link_objs: ['panda_link6']
     threshold: 0.35
-    bounds: [[-0.5, -0.8, 0.0],[0.5,0.8,1.0]]
+    bounds: [[-0.8, -0.8, 0.0],[0.8,0.8,2.0]]
     collision_spheres: '../robot/franka.yml'
     self_collision_weights: 'robot_self/franka_self_sdf.pt'
     dof: 7
@@ -76,7 +76,7 @@ model:
 cost:
   goal_pose:
     vec_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-    weight: [15.0, 100.0]
+    weight: [100.0, 200.0]
     position_gaussian_params: {'n':0, 'c':0.0, 's':0.0, 'r':10.0}
     orientation_gaussian_params: {'n':0, 'c':0.0, 's':0.0, 'r':10.0}
     hinge_val: -1
@@ -97,23 +97,25 @@ cost:
     gaussian_params: {'n':0, 'c':0.5, 's':0, 'r':5.0}
     
   primitive_collision:
-    weight: 5000.0
+    weight: 1.0
     distance_threshold: 0.05
+    violation_clip_max: 0.2
+    violation_scale: 0.25
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':10.0}
 
   robot_self_collision:
-    weight: 5000.0
+    weight: 0.0
     distance_threshold: 0.05
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':10.0}
     
 
   null_space:
-    weight: 1.0 #0.01 #0.05 #0.5 #1.0
+    weight: 0.0 #0.01 #0.05 #0.5 #1.0
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':1.0}
     vec_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5]
     #retract_state : [-1.57, -1.2, 1.9, -1.383, -1.57, 0.00]
   manipulability:
-    weight: 30.0 #100.0 #0.05 #0.5 #1.0
+    weight: 0.0 #100.0 #0.05 #0.5 #1.0
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':10.0}
     thresh: 0.03
 
@@ -127,23 +129,23 @@ cost:
     gaussian_params: {'n':0, 'c':0.0, 's':0.0, 'r':5.0}
     
   scene_collision:
-    weight: 000.0 #5000.0
+    weight: 0.0 #5000.0
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':10.0}
     #threshold: 0.35
     
   stop_cost:
-    weight: 100.0
+    weight: 5.0
     max_nlimit: 1.5 #0.2
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':1.0}
 
   stop_cost_acc:
-    weight: 0.0
+    weight: 10.0
     max_limit: 0.1 #0.2
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':1.0}
 
 
   voxel_collision:
-    weight: 000.0 #5000.0
+    weight: 0.0 #5000.0
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':100.0}
     distance_threshold: 0.05
     grid_resolution: 0.05
@@ -152,26 +154,27 @@ cost:
     weight: 0.0 
     gaussian_params: {'n':0, 'c':0.2, 's':0, 'r':10.0}
     order: 1
+
   state_bound:
     weight: 1000.0 
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':10.0}
-    bound_thresh: 0.05
+    bound_thresh: 0.15
   
   retract_state : [0.00, 0.0, 0.00, -1.5, 0.00, 2.0, 0.0]
-  retract_weight: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,0.0]
+  retract_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0,1.0]
 
 mppi:
   horizon           : 50
-  init_cov          : 0.005 #.5 #.5
+  init_cov          : 0.05 #.5 #.5
   gamma             : 0.98
   n_iters           : 1
   step_size_mean    : 0.98
   step_size_cov     : 0.7
-  beta              : 1.0
+  beta              : 0.7
   alpha             : 1
-  num_particles     : 500 #10000
-  update_cov        : False
-  cov_type          : 'diag_AxA' # 
+  num_particles     : 1000 #10000
+  update_cov        : True
+  cov_type          : 'full_AxA' # 
   kappa             : 0.005
   null_act_frac     : 0.01
   sample_mode       : 'mean'
@@ -186,3 +189,20 @@ mppi:
     seed: 0
     filter_coeffs: None #[0.3, 0.3, 0.4]
     knot_scale: 4
+
+  cat_primitive_collision:
+    enabled: false
+    p_max: 0.01
+    tau_c: 0.95
+    tau_b: 0.95 # Shift used in both cats
+    eps: 1.0e-6
+    distance_threshold: 0.05
+    violation_clip_max: 0.2
+    violation_scale: 0.25
+
+  cat_state_bound:
+    enabled: false
+    p_max: 0.1
+    tau_c: 0.95
+    eps: 1.0e-6
+    bound_thresh: 0.2

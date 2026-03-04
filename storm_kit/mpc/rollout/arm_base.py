@@ -47,6 +47,22 @@ class ArmBase(RolloutBase):
         self.exp_params = exp_params
         mppi_params = exp_params['mppi']
         model_params = exp_params['model']
+        cat_pc_cfg = self.exp_params.get('mppi', {}).get('cat_primitive_collision', {})
+        self.cat_primitive_collision_enabled = bool(cat_pc_cfg.get('enabled', False))
+        self.cat_primitive_collision_distance_threshold = cat_pc_cfg.get('distance_threshold', None)
+        if self.cat_primitive_collision_distance_threshold is not None:
+            self.cat_primitive_collision_distance_threshold = float(self.cat_primitive_collision_distance_threshold)
+        self.cat_primitive_collision_violation_clip_max = cat_pc_cfg.get('violation_clip_max', None)
+        if self.cat_primitive_collision_violation_clip_max is not None:
+            self.cat_primitive_collision_violation_clip_max = float(self.cat_primitive_collision_violation_clip_max)
+        self.cat_primitive_collision_violation_scale = cat_pc_cfg.get('violation_scale', None)
+        if self.cat_primitive_collision_violation_scale is not None:
+            self.cat_primitive_collision_violation_scale = float(self.cat_primitive_collision_violation_scale)
+        cat_sb_cfg = self.exp_params.get('mppi', {}).get('cat_state_bound', {})
+        self.cat_state_bound_enabled = bool(cat_sb_cfg.get('enabled', False))
+        self.cat_state_bound_bound_thresh = cat_sb_cfg.get('bound_thresh', None)
+        if self.cat_state_bound_bound_thresh is not None:
+            self.cat_state_bound_bound_thresh = float(self.cat_state_bound_bound_thresh)
 
         robot_params = exp_params['robot_params']
         
@@ -120,7 +136,8 @@ class ArmBase(RolloutBase):
                                                            tensor_args=self.tensor_args,
                                                            **self.exp_params['cost']['voxel_collision'])
             
-        if(exp_params['cost']['primitive_collision']['weight'] > 0.0):
+        self.primitive_collision_cost = None
+        if(exp_params['cost']['primitive_collision']['weight'] > 0.0 or self.cat_primitive_collision_enabled):
             self.primitive_collision_cost = PrimitiveCollisionCost(world_params=world_params, robot_params=robot_params, tensor_args=self.tensor_args, **self.exp_params['cost']['primitive_collision'])
 
         if(exp_params['cost']['robot_self_collision']['weight'] > 0.0):
@@ -136,7 +153,8 @@ class ArmBase(RolloutBase):
 
         self.link_pos_seq = torch.zeros((1, 1, len(self.dynamics_model.link_names), 3), **self.tensor_args)
         self.link_rot_seq = torch.zeros((1, 1, len(self.dynamics_model.link_names), 3, 3), **self.tensor_args)
-    def cost_fn(self, state_dict, action_batch, no_coll=False, horizon_cost=True):
+
+    def cost_fn(self, state_dict, action_batch, no_coll=False, horizon_cost=True, return_breakdown=False):
         
         ee_pos_batch, ee_rot_batch = state_dict['ee_pos_seq'], state_dict['ee_rot_seq']
         state_batch = state_dict['state_seq']
@@ -161,7 +179,23 @@ class ArmBase(RolloutBase):
                                                 dist_type='squared_l2')
         cost = null_disp_cost
 
+        primitive_cost = None
+        primitive_violation = None
+        state_bound_cost = None
+        state_bound_violation = None
+
         if(no_coll == True and horizon_cost == False):
+            if return_breakdown:
+                primitive_cost = torch.zeros_like(cost)
+                primitive_violation = torch.zeros_like(cost)
+                state_bound_cost = torch.zeros_like(cost)
+                state_bound_violation = torch.zeros_like(cost)
+                return cost, {
+                    "primitive_collision_costs": primitive_cost,
+                    "primitive_collision_violation": primitive_violation,
+                    "state_bound_costs": state_bound_cost,
+                    "state_bound_violation": state_bound_violation,
+                }
             return cost
         if(self.exp_params['cost']['manipulability']['weight'] > 0.0):
             cost += self.manipulability_cost.forward(J_full)
@@ -186,8 +220,17 @@ class ArmBase(RolloutBase):
                 cost += self.smooth_cost.forward(state_buffer, traj_dt)
 
 
-        if self.exp_params['cost']['state_bound']['weight'] > 0:
-            # compute collision cost:
+        if return_breakdown:
+            state_bound_cost, state_bound_violation = self.bound_cost.forward(
+                state_batch[:, :, : self.n_dofs * 3],
+                return_violation=True,
+                violation_bound_thresh=(
+                    self.cat_state_bound_bound_thresh if self.cat_state_bound_enabled else None
+                ),
+            )
+            if self.exp_params['cost']['state_bound']['weight'] > 0:
+                cost += state_bound_cost
+        elif self.exp_params['cost']['state_bound']['weight'] > 0:
             cost += self.bound_cost.forward(state_batch[:,:,:self.n_dofs * 3])
 
         if self.exp_params['cost']['ee_vel']['weight'] > 0:
@@ -203,14 +246,57 @@ class ArmBase(RolloutBase):
                     link_rot_seq=link_rot_batch,
                 )
                 cost += coll_cost
-            if self.exp_params['cost']['primitive_collision']['weight'] > 0:
-                coll_cost = self.primitive_collision_cost.forward(link_pos_batch, link_rot_batch)
-                cost += coll_cost
+            primitive_weight_enabled = self.exp_params['cost']['primitive_collision']['weight'] > 0.0
+            if self.primitive_collision_cost is not None and (primitive_weight_enabled or return_breakdown):
+                if return_breakdown:
+                    coll_cost, coll_violation = self.primitive_collision_cost.forward(
+                        link_pos_batch,
+                        link_rot_batch,
+                        return_violation=True,
+                        violation_distance_threshold=(
+                            self.cat_primitive_collision_distance_threshold
+                            if self.cat_primitive_collision_enabled
+                            else None
+                        ),
+                        violation_clip_max=(
+                            self.cat_primitive_collision_violation_clip_max
+                            if self.cat_primitive_collision_enabled
+                            else None
+                        ),
+                        violation_scale=(
+                            self.cat_primitive_collision_violation_scale
+                            if self.cat_primitive_collision_enabled
+                            else None
+                        ),
+                    )
+                    primitive_cost = coll_cost
+                    primitive_violation = coll_violation
+                    if primitive_weight_enabled:
+                        cost += coll_cost
+                elif primitive_weight_enabled:
+                    coll_cost = self.primitive_collision_cost.forward(link_pos_batch, link_rot_batch)
+                    cost += coll_cost
             if self.exp_params['cost']['voxel_collision']['weight'] > 0:
                 coll_cost = self.voxel_collision_cost.forward(link_pos_batch, link_rot_batch)
                 cost += coll_cost
 
-        
+        if return_breakdown:
+            if primitive_cost is None:
+                primitive_cost = torch.zeros_like(cost)
+            if primitive_violation is None:
+                primitive_violation = torch.zeros_like(cost)
+            if state_bound_cost is None:
+                state_bound_cost = torch.zeros_like(cost)
+            if state_bound_violation is None:
+                state_bound_violation = torch.zeros_like(cost)
+            breakdown = {
+                "primitive_collision_costs": primitive_cost,
+                "primitive_collision_violation": primitive_violation,
+                "state_bound_costs": state_bound_cost,
+                "state_bound_violation": state_bound_violation,
+            }
+            return cost, breakdown
+
         return cost
     
     def rollout_fn(self, start_state, act_seq):
@@ -232,7 +318,10 @@ class ArmBase(RolloutBase):
         
         #link_pos_seq, link_rot_seq = self.dynamics_model.get_link_poses()
         with profiler.record_function("cost_fns"):
-            cost_seq = self.cost_fn(state_dict, act_seq)
+            if self.cat_primitive_collision_enabled or self.cat_state_bound_enabled:
+                cost_seq, cost_breakdown = self.cost_fn(state_dict, act_seq, return_breakdown=True)
+            else:
+                cost_seq = self.cost_fn(state_dict, act_seq)
 
         sim_trajs = dict(
             actions=act_seq,#.clone(),
@@ -242,10 +331,16 @@ class ArmBase(RolloutBase):
             #link_rot_seq=link_rot_seq,
             rollout_time=0.0
         )
+
+        if self.cat_primitive_collision_enabled or self.cat_state_bound_enabled:
+            sim_trajs["primitive_collision_costs"] = cost_breakdown["primitive_collision_costs"]
+            sim_trajs["primitive_collision_violation"] = cost_breakdown["primitive_collision_violation"]
+            sim_trajs["state_bound_costs"] = cost_breakdown["state_bound_costs"]
+            sim_trajs["state_bound_violation"] = cost_breakdown["state_bound_violation"]
         
         return sim_trajs
 
-    def update_params(self, retract_state=None):
+    def update_params(self, retract_state=None, world_params=None, dynamic_world_spheres=None):
         """
         Updates the goal targets for the cost functions.
 
@@ -253,6 +348,17 @@ class ArmBase(RolloutBase):
         
         if(retract_state is not None):
             self.retract_state = torch.as_tensor(retract_state, **self.tensor_args).unsqueeze(0)
+
+        if world_params is not None and self.primitive_collision_cost is not None:
+            self.primitive_collision_cost = PrimitiveCollisionCost(
+                world_params=world_params,
+                robot_params=self.exp_params['robot_params'],
+                tensor_args=self.tensor_args,
+                **self.exp_params['cost']['primitive_collision'],
+            )
+
+        if dynamic_world_spheres is not None and self.primitive_collision_cost is not None:
+            self.primitive_collision_cost.set_dynamic_world_spheres(dynamic_world_spheres)
         
         return True
     

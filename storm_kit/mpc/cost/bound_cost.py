@@ -34,22 +34,36 @@ class BoundCost(nn.Module):
         self.proj_gaussian = GaussianProjection(gaussian_params=gaussian_params)
 
         self.bounds = torch.as_tensor(bounds, **tensor_args)
-        self.bnd_range = (self.bounds[:,1] - self.bounds[:,0]) / 2.0
+        self.raw_bounds = self.bounds.clone()
+        self.bnd_range = (self.raw_bounds[:,1] - self.raw_bounds[:,0]) / 2.0
         self.t_mat = None
-        self.bound_thresh = bound_thresh * self.bnd_range
-        self.bounds[:,1] -= self.bound_thresh
-        self.bounds[:,0] += self.bound_thresh
-    def forward(self, state_batch):
+        self.bound_thresh = float(bound_thresh)
+        bound_thresh_abs = self.bound_thresh * self.bnd_range
+        self.bounds[:,1] = self.raw_bounds[:,1] - bound_thresh_abs
+        self.bounds[:,0] = self.raw_bounds[:,0] + bound_thresh_abs
+
+    def _compute_violation(self, state_batch, lower, upper):
+        bound_mask = torch.logical_and(state_batch < upper, state_batch > lower)
+        sq = torch.minimum(torch.square(state_batch - lower), torch.square(upper - state_batch))
+        sq[bound_mask] = 0.0
+        return torch.sqrt(torch.sum(sq, dim=-1))
+
+    def forward(self, state_batch, return_violation=False, violation_bound_thresh=None):
         inp_device = state_batch.device
 
-        bound_mask = torch.logical_and(state_batch < self.bounds[:,1],
-                                       state_batch > self.bounds[:,0])
+        violation_default = self._compute_violation(state_batch, self.bounds[:,0], self.bounds[:,1])
+        cost = self.weight * self.proj_gaussian(violation_default)
+        cost = cost.to(inp_device)
 
-        cost = torch.minimum(torch.square(state_batch - self.bounds[:,0]),torch.square(self.bounds[:,1] - state_batch))
-        
-        cost[bound_mask] = 0.0
+        if return_violation:
+            if violation_bound_thresh is None:
+                violation_unweighted = violation_default
+            else:
+                violation_bound_thresh = float(violation_bound_thresh)
+                violation_thresh_abs = violation_bound_thresh * self.bnd_range
+                lower = self.raw_bounds[:,0] + violation_thresh_abs
+                upper = self.raw_bounds[:,1] - violation_thresh_abs
+                violation_unweighted = self._compute_violation(state_batch, lower, upper)
+            return cost, violation_unweighted.to(inp_device)
 
-        cost = (torch.sum(cost, dim=-1))
-        cost = self.weight * self.proj_gaussian(torch.sqrt(cost))
-        
-        return cost.to(inp_device)
+        return cost

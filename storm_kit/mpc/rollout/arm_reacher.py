@@ -51,9 +51,31 @@ class ArmReacher(ArmBase):
                                   tensor_args=self.tensor_args)
         
 
-    def cost_fn(self, state_dict, action_batch, no_coll=False, horizon_cost=True, return_dist=False):
+    def cost_fn(
+        self,
+        state_dict,
+        action_batch,
+        no_coll=False,
+        horizon_cost=True,
+        return_dist=False,
+        return_breakdown=False,
+    ):
 
-        cost = super(ArmReacher, self).cost_fn(state_dict, action_batch, no_coll, horizon_cost)
+        if return_breakdown:
+            cost, breakdown = super(ArmReacher, self).cost_fn(
+                state_dict,
+                action_batch,
+                no_coll=no_coll,
+                horizon_cost=horizon_cost,
+                return_breakdown=True,
+            )
+        else:
+            cost = super(ArmReacher, self).cost_fn(
+                state_dict,
+                action_batch,
+                no_coll=no_coll,
+                horizon_cost=horizon_cost,
+            )
         ee_pos_batch, ee_rot_batch = state_dict['ee_pos_seq'], state_dict['ee_rot_seq']
         
         state_batch = state_dict['state_seq']
@@ -74,7 +96,7 @@ class ArmReacher(ArmBase):
             disp_vec = state_batch[:,:,0:self.n_dofs] - goal_state[:,0:self.n_dofs]
             cost += self.dist_cost.forward(disp_vec)
 
-        if(return_dist):
+        if(return_dist and not return_breakdown):
             return cost, rot_err_norm, goal_dist
 
             
@@ -83,11 +105,23 @@ class ArmReacher(ArmBase):
 
         if self.exp_params['cost']['zero_vel']['weight'] > 0:
             cost += self.zero_vel_cost.forward(state_batch[:, :, self.n_dofs:self.n_dofs*2], goal_dist=goal_dist)
-        
+
+        if return_breakdown:
+            return cost, breakdown
+
         return cost
 
 
-    def update_params(self, retract_state=None, goal_state=None, goal_ee_pos=None, goal_ee_rot=None, goal_ee_quat=None):
+    def update_params(
+        self,
+        retract_state=None,
+        goal_state=None,
+        goal_ee_pos=None,
+        goal_ee_rot=None,
+        goal_ee_quat=None,
+        world_params=None,
+        dynamic_world_spheres=None,
+    ):
         """
         Update params for the cost terms and dynamics model.
         goal_state: n_dofs
@@ -97,7 +131,11 @@ class ArmReacher(ArmBase):
 
         """
         
-        super(ArmReacher, self).update_params(retract_state=retract_state)
+        super(ArmReacher, self).update_params(
+            retract_state=retract_state,
+            world_params=world_params,
+            dynamic_world_spheres=dynamic_world_spheres,
+        )
         
         if(goal_ee_pos is not None):
             self.goal_ee_pos = torch.as_tensor(goal_ee_pos, **self.tensor_args).unsqueeze(0)

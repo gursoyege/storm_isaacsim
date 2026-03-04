@@ -194,7 +194,7 @@ class WorldPrimitiveCollision(WorldGridCollision):
         self.load_collision_model(world_collision_params)
         self.dist = torch.zeros((1,1,1), **self.tensor_args)
 
-        if(bounds is not None):
+        if(bounds is not None and self.n_objs > 0):
             self.update_world_sdf()
 
     def load_collision_model(self, world_collision_params):
@@ -291,13 +291,17 @@ class WorldPrimitiveCollision(WorldGridCollision):
         """
         if(len(w_pts.shape) == 2):
             w_pts = w_pts.view(w_pts.shape[0], 1, 3)
-        if(self.dist.shape[0] != w_pts.shape[0] or self.dist.shape[1] != self.n_objs or self.dist_shape[2] != w_pts.shape[1]):
+        if(self.dist.shape[0] != w_pts.shape[0] or self.dist.shape[1] != self.n_objs or self.dist.shape[2] != w_pts.shape[1]):
             self.dist = torch.zeros((w_pts.shape[0], self.n_objs, w_pts.shape[1]), **self.tensor_args)
         dist = self.dist
         dist = get_pt_primitive_distance(w_pts, self._world_spheres, self._world_cubes, dist)
         return dist
 
     def get_signed_distance(self, w_pts):
+        if self.n_objs == 0:
+            if len(w_pts.shape) == 2:
+                return torch.zeros((w_pts.shape[0], 1), **self.tensor_args) - 10.0
+            return torch.zeros((w_pts.shape[0], w_pts.shape[1]), **self.tensor_args) - 10.0
         dist = torch.max(self.get_pt_distance(w_pts), dim=1)[0]
         return dist
     
@@ -480,4 +484,3 @@ class WorldImageCollision(WorldCollision):
         pt_coll[~flat_mask] = -10.0
         
         return pt_coll
-
