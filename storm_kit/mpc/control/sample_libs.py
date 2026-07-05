@@ -133,6 +133,18 @@ def bspline(c_arr, t_arr=None, n=100, degree=3):
 class KnotSampleLib(object):
     def __init__(self, horizon=0, d_action=0, n_knots=0, degree=3, seed=0, tensor_args={'device':"cpu", 'dtype':torch.float32}, sample_method='halton',
                  covariance_matrix = None, **kwargs):
+        # bspline()'s si.splrep(..., k=degree, ...) requires len(knots) > degree (scipy's
+        # "m > k must hold"). n_knots is normally horizon // knot_scale (see
+        # MultipleSampleLib/SampleLib construction below) -- shrinking horizon without shrinking
+        # knot_scale to match silently walks into this once n_knots <= degree, surfacing as a
+        # cryptic scipy TypeError deep inside the optimize_process subprocess instead of here.
+        if n_knots <= degree:
+            raise ValueError(
+                f"KnotSampleLib: n_knots ({n_knots}) must be > degree ({degree}), or "
+                f"si.splrep will fail with 'm > k must hold'. n_knots is horizon // knot_scale "
+                f"(horizon={horizon}) -- raise horizon, or lower knot_scale, so that "
+                f"horizon // knot_scale > {degree}."
+            )
         self.ndims = n_knots * d_action
         self.n_knots = n_knots
         self.horizon = horizon

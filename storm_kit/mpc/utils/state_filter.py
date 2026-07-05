@@ -71,6 +71,16 @@ class JointStateFilter(object):
         self.dt = dt
         self.filter_keys = filter_keys
         self.prev_cmd_qdd = None
+        # Dedicated "what did I command last" memory for integrate_pos's finite difference --
+        # NOT the same thing as cmd_joint_state['position'], which filter_joint_state blends
+        # towards the real measured position every tick (state_filter_coeff['position']=0.1 in
+        # franka_reacher.yml, not 0 like velocity/acceleration). Differencing against that
+        # contaminates the derivative with measurement-tracking lag instead of giving a clean
+        # commanded-trajectory slope. integrate_vel doesn't need an analogous tracker: velocity's
+        # own filter_coeff is 0.0, which already fully protects cmd_joint_state['velocity'] from
+        # this same contamination (verified: filter_joint_state's blend formula degenerates to
+        # "keep the old value" exactly when coeff=0).
+        self.prev_cmd_position = None
     def filter_joint_state(self, raw_joint_state):
         if(self.cmd_joint_state is None):
             self.cmd_joint_state = copy.deepcopy(raw_joint_state)
@@ -118,22 +128,45 @@ class JointStateFilter(object):
         self.prev_cmd_qdd = self.cmd_joint_state['acceleration']
         return self.cmd_joint_state
 
-    def integrate_vel(self, qd_des, raw_joint_state, dt=None):
+    def integrate_vel(self, qd_des, raw_joint_state=None, dt=None):
+        """FIXED: previously never updated 'acceleration' at all (left stale), inconsistent
+        with tensor_step_vel's rollout semantics (acceleration = finite-difference of velocity).
+        raw_joint_state now defaults to None (matching integrate_acc's convention) so callers
+        that already filtered the measured state earlier in the same tick (e.g.
+        BaseTask.get_command()) don't accidentally apply the EMA position/velocity blend twice.
+        """
         dt = self.dt if dt is None else dt
-        self.filter_joint_state(raw_joint_state)
-        self.cmd_joint_state['velocity'] = qd_des #self.cmd_joint_state['velocity'] + qdd_des * dt
+        if(raw_joint_state is not None):
+            self.filter_joint_state(raw_joint_state)
+        prev_velocity = copy.deepcopy(self.cmd_joint_state['velocity'])
+        self.cmd_joint_state['velocity'] = qd_des
         self.cmd_joint_state['position'] = self.cmd_joint_state['position'] + self.cmd_joint_state['velocity'] * dt
-
+        self.cmd_joint_state['acceleration'] = (self.cmd_joint_state['velocity'] - prev_velocity) / dt
         return self.cmd_joint_state
 
-    def integrate_pos(self, q_des, raw_joint_state, dt=None):
+    def integrate_pos(self, q_des, raw_joint_state=None, dt=None):
+        """FIXED: previously raised NotImplementedError outright (acceleration finite-difference
+        was never written). Now computes velocity and acceleration via backward finite
+        differences, consistent with tensor_step_pos's rollout semantics (velocity = d/dt
+        position, acceleration = d^2/dt^2 position) -- both noise-amplifying operations, since
+        q_des is the raw, unintegrated MPPI action in this control_space; see
+        franka_reacher_bench_pos.yml's header comment for the full implication of that.
+
+        Differences against self.prev_cmd_position (a dedicated tracker), NOT
+        cmd_joint_state['position']: the latter gets blended toward the real measured position
+        every tick by filter_joint_state (state_filter_coeff['position']=0.1, not 0), which
+        would otherwise contaminate this derivative with measurement-tracking lag instead of
+        giving a clean commanded-trajectory slope -- confirmed via a standalone test where this
+        produced acceleration values >100x past the hardware ceiling before this fix.
+        """
         dt = self.dt if dt is None else dt
-        self.filter_joint_state(raw_joint_state)
-
-        self.cmd_joint_state['velocity'] = (q_des - self.cmd_joint_state['position']) / dt
-        self.cmd_joint_state['position'] = self.cmd_joint_state['position'] + self.cmd_joint_state['velocity'] * dt
-
-        # This needs to also update the acceleration via finite differencing.
-        raise NotImplementedError
-
+        if(raw_joint_state is not None):
+            self.filter_joint_state(raw_joint_state)
+        prev_position = self.prev_cmd_position if self.prev_cmd_position is not None else q_des
+        prev_velocity = copy.deepcopy(self.cmd_joint_state['velocity'])
+        new_velocity = (q_des - prev_position) / dt
+        self.cmd_joint_state['acceleration'] = (new_velocity - prev_velocity) / dt
+        self.cmd_joint_state['velocity'] = new_velocity
+        self.cmd_joint_state['position'] = q_des
+        self.prev_cmd_position = copy.deepcopy(q_des)
         return self.cmd_joint_state

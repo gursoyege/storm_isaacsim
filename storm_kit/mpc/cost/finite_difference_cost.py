@@ -30,7 +30,7 @@ import torch.nn as nn
 from .gaussian_projection import GaussianProjection
 from ..model.integration_utils import build_fd_matrix
 class FiniteDifferenceCost(nn.Module):
-    def __init__(self, tensor_args={'device':torch.device('cpu'), 'dtype':torch.float32}, weight=1.0, order=1, gaussian_params={}, **kwargs):
+    def __init__(self, tensor_args={'device':torch.device('cpu'), 'dtype':torch.float32}, weight=1.0, order=1, gaussian_params={}, vec_weight=None, **kwargs):
         super(FiniteDifferenceCost, self).__init__()
 
         self.order = order
@@ -38,6 +38,11 @@ class FiniteDifferenceCost(nn.Module):
             weight *= weight
         self.weight = weight
         self.tensor_args = tensor_args
+        # Tier 2d: optional per-DOF weight (e.g. upweight low-torque-limit wrist joints).
+        # None means "all ones", preserved as a tensor lazily once forward() knows d_act,
+        # since the model dof count isn't known yet at construction time.
+        self._vec_weight_cfg = vec_weight
+        self.vec_weight = None
         # build FD matrix
         
         self.fd_mat = None
@@ -76,11 +81,25 @@ class FiniteDifferenceCost(nn.Module):
         
         
         diff = torch.matmul(self.fd_mat,ctrl_seq)
-        
+
         res = torch.abs(diff)
-        
-        cost = res[:,:,-1]
-            
+
+        # NOTE: upstream STORM did `cost = res[:,:,-1]` here, which only ever reads the *last*
+        # d_act index -- for cost.smooth (called with the velocity state slice, d_act=n_dofs)
+        # that means only the last joint (the wrist) was ever penalized; joints 1-(n_dofs-1)
+        # silently contributed nothing. Verified empirically with synthetic per-joint ramps.
+        # Sum across all DOFs (optionally per-DOF weighted) instead.
+        d_act = res.shape[-1]
+        if self.vec_weight is None or self.vec_weight.shape[0] != d_act:
+            if self._vec_weight_cfg is None:
+                vw = torch.ones(d_act, **self.tensor_args)
+            else:
+                vw = torch.as_tensor(self._vec_weight_cfg, **self.tensor_args)
+                if vw.numel() != d_act:
+                    raise ValueError(f"FiniteDifferenceCost vec_weight has {vw.numel()} entries, expected {d_act}.")
+            self.vec_weight = vw
+        cost = torch.sum(res * self.vec_weight, dim=-1)
+
         cost[cost < 0.0001] = 0.0
         cost = self.weight * cost 
         

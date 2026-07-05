@@ -148,13 +148,25 @@ class MPPI(OLGaussianMPC):
         vis_seq = trajectories[self.visual_traj].to(**self.tensor_args)
         actions = trajectories["actions"].to(**self.tensor_args)
         w = self._exp_util(costs, actions, trajectories=trajectories)
-        
+
+        # Tier 2c diagnostic: effective sample size N_eff = 1/sum(w_k^2) of the importance
+        # weights (w is a softmax over the particle dim, see _exp_util, so this is the standard
+        # ESS formula). Ranges from 1 (collapsed onto one particle) to num_particles (uniform).
+        # Low N_eff means the executed "mean" action is effectively an average of very few
+        # particles each tick -- a direct read on how much sampling-noise risk step_size_mean/
+        # smooth-cost retuning is fighting.
+        self.effective_sample_size = float(1.0 / torch.sum(w * w).item())
+
         #Update best action
         best_idx = torch.argmax(w)
         self.best_idx = best_idx
         self.best_traj = torch.index_select(actions, 0, best_idx).squeeze(0)
 
-        top_values, top_idx = torch.topk(self.total_costs, 10)
+        # FIX: total_costs is lower-is-better (see softmax(-cost/beta) above), but torch.topk
+        # defaults to largest=True -- so this previously selected the 10 WORST rollouts despite
+        # being named top_trajs/top_values. Confirmed via grep across the whole workspace that
+        # nothing consumes these for control decisions (visualization-only), so this is safe.
+        top_values, top_idx = torch.topk(self.total_costs, 10, largest=False)
         #print(ee_pos_seq.shape, top_idx)
         self.top_values = top_values
         self.top_idx = top_idx

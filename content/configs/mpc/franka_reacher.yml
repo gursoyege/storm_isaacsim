@@ -1,26 +1,3 @@
-##
-## MIT License
-##
-## Copyright (c) 2020-2021 NVIDIA CORPORATION.
-##
-## Permission is hereby granted, free of charge, to any person obtaining a
-## copy of this software and associated documentation files (the "Software"),
-## to deal in the Software without restriction, including without limitation
-## the rights to use, copy, modify, merge, publish, distribute, sublicense,
-## and/or sell copies of the Software, and to permit persons to whom the
-## Software is furnished to do so, subject to the following conditions:
-##
-## The above copyright notice and this permission notice shall be included in
-## all copies or substantial portions of the Software.
-##
-## THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-## IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-## FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
-## THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-## LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-## FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-## DEALINGS IN THE SOFTWARE.##
-
 # @package _global_
 use_cuda: True
 cuda_device_num: 0
@@ -30,7 +7,8 @@ run_open_loop: False
 control_space: 'acc'
 float_dtype: 'float32'
 state_filter_coeff: {'position':0.1, 'velocity':0.0, 'acceleration':0.0}
-cmd_filter_coeff: {'position':1.0, 'velocity':1.0, 'acceleration':0.0}
+cmd_filter_coeff: {'position':1.0, 'velocity':1.0, 'acceleration':0.3}
+enable_command_filter: true
 
 model:
   # any link that is not specified as learnable will be initialized from urdf
@@ -38,7 +16,7 @@ model:
   learnable_rigid_body_config:
     learnable_links: []
   name: "franka_panda"
-  max_acc: 5.0 
+  max_acc: 10.0
   dt: 0.02
   dt_traj_params:
     base_dt: 0.02
@@ -88,8 +66,8 @@ cost:
     gaussian_params: {'n':0, 'c':0.2, 's':0, 'r':1.0}
 
   zero_acc:
-    weight: 0.0 #0.01
-    hinge_val: -1.0
+    weight: 0.01
+    hinge_val: 0.1
     gaussian_params: {'n':0, 'c':0.2, 's':0, 'r':5.0}
   
   collision:
@@ -97,7 +75,7 @@ cost:
     gaussian_params: {'n':0, 'c':0.5, 's':0, 'r':5.0}
     
   primitive_collision:
-    weight: 1.0
+    weight: 0.0
     distance_threshold: 0.05
     violation_clip_max: 0.2
     violation_scale: 0.25
@@ -134,12 +112,12 @@ cost:
     #threshold: 0.35
     
   stop_cost:
-    weight: 5.0
+    weight: 5.0 # 5.0
     max_nlimit: 1.5 #0.2
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':1.0}
 
   stop_cost_acc:
-    weight: 10.0
+    weight: 10.0 #10.0
     max_limit: 0.1 #0.2
     gaussian_params: {'n':0, 'c':0.0, 's':0, 'r':1.0}
 
@@ -150,8 +128,8 @@ cost:
     distance_threshold: 0.05
     grid_resolution: 0.05
 
-  smooth: # on robot acceleration
-    weight: 0.0 
+  smooth: 
+    weight: 0.05
     gaussian_params: {'n':0, 'c':0.2, 's':0, 'r':10.0}
     order: 1
 
@@ -168,13 +146,13 @@ mppi:
   init_cov          : 0.05 #.5 #.5
   gamma             : 0.98
   n_iters           : 1
-  step_size_mean    : 0.98
+  step_size_mean    : 0.65
   step_size_cov     : 0.7
-  beta              : 0.7
+  beta              : 1.0
   alpha             : 1
-  num_particles     : 1000 #10000
+  num_particles     : 1500
   update_cov        : True
-  cov_type          : 'full_AxA' # 
+  cov_type          : 'full_AxA' 
   kappa             : 0.005
   null_act_frac     : 0.01
   sample_mode       : 'mean'

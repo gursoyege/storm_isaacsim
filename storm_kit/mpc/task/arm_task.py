@@ -76,14 +76,44 @@ class ArmTask(BaseTask):
         mppi_params = exp_params['mppi']
         dynamics_model = rollout_fn.dynamics_model
         mppi_params['d_action'] = dynamics_model.d_action
-        mppi_params['action_lows'] = -exp_params['model']['max_acc'] * torch.ones(dynamics_model.d_action, **self.tensor_args)
-        mppi_params['action_highs'] = exp_params['model']['max_acc'] * torch.ones(dynamics_model.d_action, **self.tensor_args)
+
+        # FIX: action_lows/highs were always +-model.max_acc regardless of control_space --
+        # nonsensical units for 'vel' (rad/s) or 'pos' (rad, an absolute joint angle) actions,
+        # both literally just the acceleration bound reused verbatim. Each control_space now
+        # reads its own bound, with new optional model.* keys (all backward compatible: existing
+        # 'acc'-mode yaml files are untouched and need none of them).
+        control_space = exp_params['control_space']
+        if control_space == 'acc':
+            action_bound = float(exp_params['model']['max_acc'])
+        elif control_space == 'vel':
+            # rad/s. Default well inside the hardware ceiling (2.175-2.61 rad/s for this arm).
+            action_bound = float(exp_params['model'].get('max_vel', 1.0))
+        elif control_space == 'pos':
+            # rad, a hard clamp on the *sampled action* only -- not a substitute for real
+            # per-joint URDF limits, which the existing state_bound cost (weight 1000) already
+            # enforces precisely. This is intentionally a touch conservative (most of this
+            # arm's 7 joints have a +-2.8ish rad range; joint2 is tighter at +-1.76) so the
+            # state_bound cost corrects the rare violation rather than this clamp mattering much.
+            action_bound = float(exp_params['model'].get('max_pos_action', 2.5))
+        elif control_space == 'jerk':
+            action_bound = float(exp_params['model'].get('max_jerk', 100.0))
+        else:
+            raise ValueError(f"Unknown control_space '{control_space}'")
+        mppi_params['action_lows'] = -action_bound * torch.ones(dynamics_model.d_action, **self.tensor_args)
+        mppi_params['action_highs'] = action_bound * torch.ones(dynamics_model.d_action, **self.tensor_args)
+
         init_q = torch.tensor(exp_params['model']['init_state'], **self.tensor_args)
         init_action = torch.zeros((mppi_params['horizon'], dynamics_model.d_action), **self.tensor_args)
         init_action[:,:] += init_q
-        if(exp_params['control_space'] == 'acc'):
+        # FIX: 'vel' (and 'jerk') had no branch here at all, leaving mppi_params['init_mean']
+        # unset -> MPPI.__init__() crashes immediately with a missing-argument TypeError before
+        # this fix (confirmed). 'vel'/'jerk' start from zero action (zero velocity / zero jerk),
+        # matching 'acc' mode's own "start from zero action" convention; only 'pos' starts from
+        # the robot's current joint configuration, since a zero *position* action would be a
+        # nonsensical initial target.
+        if control_space in ('acc', 'vel', 'jerk'):
             mppi_params['init_mean'] = init_action * 0.0 # device=device)
-        elif(exp_params['control_space'] == 'pos'):
+        elif control_space == 'pos':
             mppi_params['init_mean'] = init_action
         mppi_params['rollout_fn'] = rollout_fn
         mppi_params['tensor_args'] = self.tensor_args

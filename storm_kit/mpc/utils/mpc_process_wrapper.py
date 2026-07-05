@@ -68,6 +68,7 @@ class ControlProcess(object):
         self.top_trajs = None
         self.top_values = None
         self.top_idx = None
+        self.effective_sample_size = float('nan')
         self.control_space = control_space
         
         #
@@ -133,6 +134,7 @@ class ControlProcess(object):
         self.top_idx = self.controller.top_idx
         self.top_values = self.controller.top_values
         self.top_trajs = self.controller.top_trajs
+        self.effective_sample_size = getattr(self.controller, 'effective_sample_size', float('nan'))
         self.command = command
 
         command_buffer, command_tstep_buffer = self.truncate_command(self.command[0], t_step, self.command_tstep)
@@ -179,6 +181,7 @@ class ControlProcess(object):
             self.top_values = command_data['top_values']
             self.top_trajs = command_data['top_trajs']
             self.top_idx = command_data['top_idx']
+            self.effective_sample_size = command_data.get('effective_sample_size', float('nan'))
             
             
             
@@ -265,11 +268,13 @@ def optimize_process(control_string, opt_queue, result_queue):
         top_idx = controller.top_idx
         top_values = controller.top_values
         top_trajs = controller.top_trajs
-        
+        effective_sample_size = getattr(controller, 'effective_sample_size', float('nan'))
+
         command[0] = command[0].cpu().numpy()
-        
+
         result = {'command':command, 't_step': opt_data['t_step'], 'mpc_dt': mpc_time,
-                  'top_values':top_values, 'top_trajs':top_trajs, 'top_idx':top_idx}
+                  'top_values':top_values, 'top_trajs':top_trajs, 'top_idx':top_idx,
+                  'effective_sample_size': effective_sample_size}
         result_queue.put(result)
         i = time.time() - start_time
     return True
